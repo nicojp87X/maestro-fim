@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { formatBytes } from "@/lib/utils/format";
+import { useLanguage } from "@/lib/i18n/context";
 
 type UploadState =
   | "idle"
@@ -25,15 +26,7 @@ type UploadState =
   | "completed"
   | "failed";
 
-const STATUS_MESSAGES: Record<UploadState, string> = {
-  idle: "",
-  uploading: "Subiendo archivo...",
-  extracting: "Leyendo tus analíticas...",
-  analyzing: "Consultando base de conocimiento FIM...",
-  generating: "Generando tu informe personalizado...",
-  completed: "¡Informe listo!",
-  failed: "Error al procesar el archivo",
-};
+// Status messages are now resolved via t() inside the component
 
 const STATUS_PROGRESS: Record<UploadState, number> = {
   idle: 0,
@@ -47,6 +40,17 @@ const STATUS_PROGRESS: Record<UploadState, number> = {
 
 export default function UploadDropzone({ initialJobId }: { initialJobId?: string }) {
   const router = useRouter();
+  const { t } = useLanguage();
+
+  const STATUS_MESSAGES: Record<UploadState, string> = {
+    idle: "",
+    uploading: t("upload_status_uploading"),
+    extracting: t("upload_status_extracting"),
+    analyzing: t("upload_status_analyzing"),
+    generating: t("upload_status_generating"),
+    completed: t("upload_status_completed"),
+    failed: t("upload_status_failed"),
+  };
   const [state, setState] = useState<UploadState>(initialJobId ? "extracting" : "idle");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState<string | null>(initialJobId ?? null);
@@ -95,6 +99,18 @@ export default function UploadDropzone({ initialJobId }: { initialJobId?: string
 
         if (!res.ok) {
           const err = await res.json();
+          if (err.error === "upgrade_required") {
+            setState("idle");
+            setSelectedFile(null);
+            toast.error(t("upload_upgrade_toast"), {
+              action: {
+                label: t("upload_upgrade_action"),
+                onClick: () => router.push("/subscription"),
+              },
+              duration: 6000,
+            });
+            return;
+          }
           throw new Error(err.error ?? "Upload failed");
         }
 
@@ -159,14 +175,14 @@ export default function UploadDropzone({ initialJobId }: { initialJobId?: string
           <div className="max-w-xs mx-auto space-y-2">
             <Progress value={STATUS_PROGRESS[state]} className="h-2" />
             <p className="text-xs text-muted-foreground">
-              Esto puede tardar 1-2 minutos
+              {t("upload_wait")}
             </p>
           </div>
         )}
 
         {state === "failed" && (
           <Button onClick={() => { setState("idle"); setSelectedFile(null); setJobId(null); }}>
-            Intentar de nuevo
+            {t("upload_retry")}
           </Button>
         )}
       </div>
@@ -193,13 +209,9 @@ export default function UploadDropzone({ initialJobId }: { initialJobId?: string
 
         <div>
           <p className="text-xl font-semibold">
-            {isDragActive
-              ? "Suelta tu analítica aquí"
-              : "Arrastra tu analítica aquí"}
+            {isDragActive ? t("upload_drag_active") : t("upload_drag")}
           </p>
-          <p className="text-muted-foreground mt-1">
-            o haz clic para seleccionar el archivo
-          </p>
+          <p className="text-muted-foreground mt-1">{t("upload_click")}</p>
         </div>
 
         <div className="flex justify-center gap-6 text-sm text-muted-foreground">
@@ -213,9 +225,7 @@ export default function UploadDropzone({ initialJobId }: { initialJobId?: string
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          Máximo 20 MB por archivo
-        </p>
+        <p className="text-xs text-muted-foreground">{t("upload_max")}</p>
       </div>
     </div>
   );

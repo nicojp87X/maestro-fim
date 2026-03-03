@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   // Check active subscription
   const { data: subscription } = await supabase
     .from("subscriptions")
-    .select("status")
+    .select("status, plan")
     .eq("user_id", user.id)
     .single();
 
@@ -39,6 +39,22 @@ export async function POST(request: Request) {
       { error: "Active subscription required" },
       { status: 403 }
     );
+  }
+
+  // Free plan: only 1 analysis allowed
+  if (subscription.plan === "free") {
+    const { count } = await supabase
+      .from("analysis_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("status", "completed");
+
+    if ((count ?? 0) >= 1) {
+      return NextResponse.json(
+        { error: "upgrade_required" },
+        { status: 403 }
+      );
+    }
   }
 
   // Parse multipart form

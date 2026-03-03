@@ -13,9 +13,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { planId } = (await request.json()) as { planId: PlanId };
+  const body = (await request.json()) as { plan?: PlanId; planId?: PlanId };
+  const planId = (body.plan ?? body.planId) as PlanId;
 
-  if (!PLANS[planId]) {
+  if (!planId || !PLANS[planId]) {
     return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
   }
 

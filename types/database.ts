@@ -6,7 +6,7 @@ export type AnalysisJobStatus =
   | "generating"
   | "completed"
   | "failed";
-export type SubscriptionPlan = "monthly" | "annual";
+export type SubscriptionPlan = "free" | "monthly" | "annual";
 export type SubscriptionStatus =
   | "active"
   | "canceled"

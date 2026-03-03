@@ -20,6 +20,22 @@ export default async function DashboardPage() {
 
   if (!user) redirect("/auth/login");
 
+  // Auto-create free subscription if user has none
+  const { data: existingSub } = await supabase
+    .from("subscriptions")
+    .select("id")
+    .eq("user_id", user.id)
+    .single();
+
+  if (!existingSub) {
+    await supabase.from("subscriptions").insert({
+      user_id: user.id,
+      plan: "free",
+      status: "active",
+      cancel_at_period_end: false,
+    });
+  }
+
   const [{ data: profile }, { data: recentJobs }] = await Promise.all([
     supabase.from("profiles").select("full_name").eq("id", user.id).single(),
     supabase
