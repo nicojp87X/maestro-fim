@@ -64,8 +64,8 @@ export async function runAnalysisPipeline(
     };
 
     const extractionResponse = await anthropic.messages.create({
-      model: "claude-opus-4-6",
-      max_tokens: 4096,
+      model: "claude-3-5-haiku-20241022",
+      max_tokens: 2048,
       messages: [
         {
           role: "user",
@@ -157,8 +157,8 @@ export async function runAnalysisPipeline(
     );
 
     const reportResponse = await anthropic.messages.create({
-      model: "claude-opus-4-6",
-      max_tokens: 8192,
+      model: "claude-3-5-haiku-20241022",
+      max_tokens: 4096,
       system: FIM_SYSTEM_PROMPT,
       messages: [{ role: "user", content: reportPrompt }],
     });
@@ -221,7 +221,7 @@ export async function runAnalysisPipeline(
       priority_actions: reportData.priority_actions,
       follow_up_markers: reportData.follow_up_markers,
       rag_sources_used: biomarkerNames,
-      model_version: "claude-opus-4-6",
+      model_version: "claude-3-5-haiku-20241022",
     });
 
     await updateJobStatus(jobId, "completed");

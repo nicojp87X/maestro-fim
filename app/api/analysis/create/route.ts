@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
+
+// Hobby plan: 60s max. Pro plan: 300s max.
+// waitUntil keeps the Lambda alive after the Response is returned.
+export const maxDuration = 60;
 
 const ALLOWED_TYPES = [
   "image/jpeg",
@@ -129,9 +134,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // Run pipeline asynchronously (fire and forget)
-  runAnalysisPipeline(job.id, user.id, storagePath, inputType).catch(
-    (err) => console.error("Pipeline launch error:", err)
+  // Use waitUntil so Vercel keeps the Lambda alive until the pipeline finishes
+  // (or until maxDuration is reached). Without this, the Lambda is killed the
+  // moment the HTTP response is sent, leaving the job stuck in "extracting".
+  waitUntil(
+    runAnalysisPipeline(job.id, user.id, storagePath, inputType).catch(
+      (err) => console.error("Pipeline launch error:", err)
+    )
   );
 
   return NextResponse.json({ jobId: job.id });
