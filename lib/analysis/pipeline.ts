@@ -34,8 +34,12 @@ export async function runAnalysisPipeline(
   storagePath: string,
   inputType: "image" | "pdf"
 ) {
+  const t0 = Date.now();
+  const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+
   try {
     // ─── STEP 1: Download file from Supabase Storage ───────────────────────
+    console.log(`[Pipeline ${jobId}] STEP 1: Downloading file…`);
     await updateJobStatus(jobId, "extracting");
 
     const { data: fileData, error: downloadError } =
@@ -44,11 +48,17 @@ export async function runAnalysisPipeline(
     if (downloadError || !fileData) {
       throw new Error(`Failed to download file: ${downloadError?.message}`);
     }
+    console.log(`[Pipeline ${jobId}] STEP 1 done at ${elapsed()}`);
 
     const fileBuffer = await fileData.arrayBuffer();
     const base64 = Buffer.from(fileBuffer).toString("base64");
+    console.log(
+      `[Pipeline ${jobId}] File size: ${(fileBuffer.byteLength / 1024).toFixed(0)} KB, inputType: ${inputType}`
+    );
 
     // ─── STEP 2: Extract biomarkers with Claude Vision ─────────────────────
+    console.log(`[Pipeline ${jobId}] STEP 2: Calling Anthropic (extraction)…`);
+
     let mediaType: "image/jpeg" | "image/png" | "application/pdf" =
       "image/jpeg";
     if (inputType === "pdf") mediaType = "application/pdf";
@@ -63,19 +73,27 @@ export async function runAnalysisPipeline(
       },
     };
 
-    const extractionResponse = await anthropic.messages.create({
-      model: "claude-3-5-haiku-20241022",
-      max_tokens: 2048,
-      messages: [
-        {
-          role: "user",
-          content: [
-            documentBlock,
-            { type: "text", text: EXTRACTION_PROMPT },
-          ],
-        },
-      ],
-    });
+    let extractionResponse;
+    try {
+      extractionResponse = await anthropic.messages.create({
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 2048,
+        messages: [
+          {
+            role: "user",
+            content: [
+              documentBlock,
+              { type: "text", text: EXTRACTION_PROMPT },
+            ],
+          },
+        ],
+      });
+    } catch (anthropicErr) {
+      const msg =
+        anthropicErr instanceof Error ? anthropicErr.message : String(anthropicErr);
+      throw new Error(`Anthropic extraction failed: ${msg}`);
+    }
+    console.log(`[Pipeline ${jobId}] STEP 2 done at ${elapsed()}`);
 
     const extractionText =
       extractionResponse.content[0].type === "text"
@@ -95,7 +113,6 @@ export async function runAnalysisPipeline(
     };
 
     try {
-      // Clean JSON from potential markdown code blocks
       const jsonText = extractionText
         .replace(/```json\n?/g, "")
         .replace(/```\n?/g, "")
@@ -120,14 +137,31 @@ export async function runAnalysisPipeline(
         }))
       );
     }
+    console.log(
+      `[Pipeline ${jobId}] Extracted ${extractedData.biomarkers.length} biomarkers`
+    );
 
-    // ─── STEP 3: RAG - Retrieve relevant FIM knowledge ─────────────────────
+    // ─── STEP 3: RAG - Retrieve relevant FIM knowledge (optional) ──────────
     await updateJobStatus(jobId, "analyzing");
+    console.log(`[Pipeline ${jobId}] STEP 3: Building RAG context…`);
 
     const biomarkerNames = extractedData.biomarkers.map((b) => b.biomarker_name);
-    const ragContext = await buildRagContext(biomarkerNames);
+    let ragContext =
+      "No se encontró contexto adicional en la base de conocimiento FIM.";
+
+    try {
+      ragContext = await buildRagContext(biomarkerNames);
+      console.log(`[Pipeline ${jobId}] STEP 3 done at ${elapsed()}`);
+    } catch (ragErr) {
+      // RAG is optional — if OpenAI/pgvector fails, continue without context
+      const ragMsg = ragErr instanceof Error ? ragErr.message : String(ragErr);
+      console.warn(
+        `[Pipeline ${jobId}] RAG failed (continuing without context): ${ragMsg}`
+      );
+    }
 
     // ─── STEP 4: Get patient profile for personalization ───────────────────
+    console.log(`[Pipeline ${jobId}] STEP 4: Fetching patient profile…`);
     const { data: profile } = await supabaseAdmin
       .from("profiles")
       .select("*")
@@ -142,6 +176,7 @@ export async function runAnalysisPipeline(
 
     // ─── STEP 5: Generate FIM report with Claude ───────────────────────────
     await updateJobStatus(jobId, "generating");
+    console.log(`[Pipeline ${jobId}] STEP 5: Calling Anthropic (report)…`);
 
     const reportPrompt = buildFIMReportPrompt(
       extractedData.biomarkers,
@@ -156,12 +191,20 @@ export async function runAnalysisPipeline(
       ragContext
     );
 
-    const reportResponse = await anthropic.messages.create({
-      model: "claude-3-5-haiku-20241022",
-      max_tokens: 4096,
-      system: FIM_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: reportPrompt }],
-    });
+    let reportResponse;
+    try {
+      reportResponse = await anthropic.messages.create({
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 4096,
+        system: FIM_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: reportPrompt }],
+      });
+    } catch (reportErr) {
+      const msg =
+        reportErr instanceof Error ? reportErr.message : String(reportErr);
+      throw new Error(`Anthropic report generation failed: ${msg}`);
+    }
+    console.log(`[Pipeline ${jobId}] STEP 5 done at ${elapsed()}`);
 
     const reportText =
       reportResponse.content[0].type === "text"
@@ -180,6 +223,7 @@ export async function runAnalysisPipeline(
     }
 
     // ─── STEP 6: Save report ───────────────────────────────────────────────
+    console.log(`[Pipeline ${jobId}] STEP 6: Saving report…`);
     const biomarkerAssessments = (
       reportData.biomarker_assessments as Array<{
         biomarker_name: string;
@@ -221,14 +265,15 @@ export async function runAnalysisPipeline(
       priority_actions: reportData.priority_actions,
       follow_up_markers: reportData.follow_up_markers,
       rag_sources_used: biomarkerNames,
-      model_version: "claude-3-5-haiku-20241022",
+      model_version: "claude-3-5-sonnet-20241022",
     });
 
     await updateJobStatus(jobId, "completed");
+    console.log(`[Pipeline ${jobId}] COMPLETED at ${elapsed()} ✓`);
   } catch (err) {
     const errorMessage =
       err instanceof Error ? err.message : "Unknown pipeline error";
-    console.error(`Pipeline error for job ${jobId}:`, errorMessage);
+    console.error(`[Pipeline ${jobId}] FAILED at ${elapsed()}: ${errorMessage}`);
     await updateJobStatus(jobId, "failed", errorMessage);
   }
 }
