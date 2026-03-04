@@ -80,9 +80,18 @@ export async function POST(request: Request) {
   }
 
   // Upload to Supabase Storage
-  const fileExt = file.name.split(".").pop() ?? "bin";
   const jobId = crypto.randomUUID();
-  const storagePath = `${user.id}/${jobId}/${file.name}`;
+
+  // Sanitize filename for storage: remove accents, replace spaces/special chars
+  // with underscores. The original name is preserved in analysis_jobs.original_filename.
+  const safeFilename = file.name
+    .normalize("NFD")                    // decompose accented characters (á → a + ́)
+    .replace(/[\u0300-\u036f]/g, "")    // strip accent marks
+    .replace(/[^a-zA-Z0-9._-]/g, "_")  // replace any remaining unsafe char with _
+    .replace(/_+/g, "_")               // collapse consecutive underscores
+    .replace(/^_|_$/g, "");            // trim leading/trailing underscores
+
+  const storagePath = `${user.id}/${jobId}/${safeFilename}`;
 
   const fileBuffer = await file.arrayBuffer();
   const { error: uploadError } = await supabaseAdmin.storage
