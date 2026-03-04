@@ -11,11 +11,29 @@ export default async function SubscriptionPage() {
 
   if (!user) redirect("/auth/login");
 
-  const { data: subscription } = await supabase
+  // Try to fetch existing subscription
+  let { data: subscription } = await supabase
     .from("subscriptions")
     .select("*")
     .eq("user_id", user.id)
     .single();
+
+  // Auto-create free subscription if none exists (mirrors dashboard logic)
+  if (!subscription) {
+    const { data: newSub } = await supabase
+      .from("subscriptions")
+      .insert({
+        user_id: user.id,
+        plan: "free",
+        status: "active",
+        cancel_at_period_end: false,
+        // stripe_customer_id will be created on first checkout attempt
+      })
+      .select("*")
+      .single();
+
+    subscription = newSub;
+  }
 
   return <SubscriptionClient subscription={subscription} />;
 }

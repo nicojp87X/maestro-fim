@@ -13,7 +13,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = (await request.json()) as { plan?: PlanId; planId?: PlanId };
+  let body: { plan?: PlanId; planId?: PlanId };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
   const planId = (body.plan ?? body.planId) as PlanId;
 
   if (!planId || !PLANS[planId]) {
@@ -22,45 +28,73 @@ export async function POST(request: Request) {
 
   const plan = PLANS[planId];
 
-  // Get or create Stripe customer
-  const { data: subscription } = await supabase
-    .from("subscriptions")
-    .select("stripe_customer_id")
-    .eq("user_id", user.id)
-    .single();
-
-  let customerId = subscription?.stripe_customer_id;
-
-  if (!customerId) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", user.id)
+  try {
+    // Get existing subscription (if any) to retrieve stripe_customer_id
+    const { data: subscription } = await supabase
+      .from("subscriptions")
+      .select("stripe_customer_id")
+      .eq("user_id", user.id)
       .single();
 
-    const customer = await stripe.customers.create({
-      email: user.email!,
-      name: profile?.full_name ?? undefined,
-      metadata: { supabase_user_id: user.id },
+    let customerId = subscription?.stripe_customer_id ?? null;
+
+    if (!customerId) {
+      // Fetch profile for customer name
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .single();
+
+      // Create Stripe customer
+      const customer = await stripe.customers.create({
+        email: user.email!,
+        name: profile?.full_name ?? undefined,
+        metadata: { supabase_user_id: user.id },
+      });
+      customerId = customer.id;
+
+      // Persist the customer ID so we reuse it on future checkouts
+      if (subscription) {
+        await supabase
+          .from("subscriptions")
+          .update({ stripe_customer_id: customerId })
+          .eq("user_id", user.id);
+      } else {
+        await supabase.from("subscriptions").insert({
+          user_id: user.id,
+          stripe_customer_id: customerId,
+          plan: "free",
+          status: "active",
+          cancel_at_period_end: false,
+        });
+      }
+    }
+
+    // Create Stripe Checkout session
+    const session = await stripe.checkout.sessions.create({
+      customer: customerId,
+      payment_method_types: ["card"],
+      line_items: [{ price: plan.priceId, quantity: 1 }],
+      mode: "subscription",
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?success=true`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/subscription?canceled=true`,
+      metadata: {
+        supabase_user_id: user.id,
+        plan: planId,
+      },
+      subscription_data: {
+        metadata: { supabase_user_id: user.id, plan: planId },
+      },
     });
-    customerId = customer.id;
+
+    return NextResponse.json({ url: session.url });
+  } catch (error: unknown) {
+    console.error("[Stripe Checkout Error]", error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Stripe checkout failed. Please try again.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  const session = await stripe.checkout.sessions.create({
-    customer: customerId,
-    payment_method_types: ["card"],
-    line_items: [{ price: plan.priceId, quantity: 1 }],
-    mode: "subscription",
-    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?success=true`,
-    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/subscription?canceled=true`,
-    metadata: {
-      supabase_user_id: user.id,
-      plan: planId,
-    },
-    subscription_data: {
-      metadata: { supabase_user_id: user.id, plan: planId },
-    },
-  });
-
-  return NextResponse.json({ url: session.url });
 }
