@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
-import { anthropic } from "@/lib/anthropic/client";
+import OpenAI from "openai";
+import pdfParse from "pdf-parse";
 import { FIM_SYSTEM_PROMPT } from "@/lib/anthropic/prompts/system-context";
 import { EXTRACTION_PROMPT } from "@/lib/anthropic/prompts/extraction";
 import { buildFIMReportPrompt } from "@/lib/anthropic/prompts/fim-report";
@@ -10,6 +11,10 @@ const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const MODEL = "gpt-4o";
 
 async function updateJobStatus(
   jobId: string,
@@ -34,8 +39,12 @@ export async function runAnalysisPipeline(
   storagePath: string,
   inputType: "image" | "pdf"
 ) {
+  const t0 = Date.now();
+  const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+
   try {
     // ─── STEP 1: Download file from Supabase Storage ───────────────────────
+    console.log(`[Pipeline ${jobId}] STEP 1: Downloading file…`);
     await updateJobStatus(jobId, "extracting");
 
     const { data: fileData, error: downloadError } =
@@ -44,43 +53,78 @@ export async function runAnalysisPipeline(
     if (downloadError || !fileData) {
       throw new Error(`Failed to download file: ${downloadError?.message}`);
     }
+    console.log(`[Pipeline ${jobId}] STEP 1 done at ${elapsed()}`);
 
     const fileBuffer = await fileData.arrayBuffer();
-    const base64 = Buffer.from(fileBuffer).toString("base64");
+    console.log(
+      `[Pipeline ${jobId}] File size: ${(fileBuffer.byteLength / 1024).toFixed(0)} KB, inputType: ${inputType}`
+    );
 
-    // ─── STEP 2: Extract biomarkers with Claude Vision ─────────────────────
-    let mediaType: "image/jpeg" | "image/png" | "application/pdf" =
-      "image/jpeg";
-    if (inputType === "pdf") mediaType = "application/pdf";
+    // ─── STEP 2: Extract biomarkers with GPT-4o ────────────────────────────
+    console.log(`[Pipeline ${jobId}] STEP 2: Calling OpenAI (extraction)…`);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const documentBlock: any = {
-      type: inputType === "pdf" ? "document" : "image",
-      source: {
-        type: "base64",
-        media_type: mediaType,
-        data: base64,
-      },
-    };
+    // Build the user message content depending on file type
+    // PDFs → extract text with pdf-parse and send as text
+    // Images → send as base64 vision content
+    type OpenAIContent = OpenAI.Chat.ChatCompletionContentPart;
+    let extractionContent: OpenAIContent[];
 
-    const extractionResponse = await anthropic.messages.create({
-      model: "claude-3-5-haiku-20241022",
-      max_tokens: 2048,
-      messages: [
+    if (inputType === "pdf") {
+      let pdfText: string;
+      try {
+        const parsed = await pdfParse(Buffer.from(fileBuffer));
+        pdfText = parsed.text?.trim() ?? "";
+      } catch (parseErr) {
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        throw new Error(`PDF text extraction failed: ${msg}`);
+      }
+
+      if (!pdfText) {
+        throw new Error(
+          "El PDF no contiene texto extraíble. Por favor, sube una imagen (JPG/PNG) del análisis."
+        );
+      }
+
+      extractionContent = [
         {
-          role: "user",
-          content: [
-            documentBlock,
-            { type: "text", text: EXTRACTION_PROMPT },
-          ],
+          type: "text",
+          text: `${EXTRACTION_PROMPT}\n\n## CONTENIDO DEL DOCUMENTO\n\n${pdfText}`,
         },
-      ],
-    });
+      ];
+    } else {
+      // Image: send as base64 data URL
+      const mimeType = storagePath.match(/\.png$/i)
+        ? "image/png"
+        : storagePath.match(/\.webp$/i)
+        ? "image/webp"
+        : storagePath.match(/\.heic$/i)
+        ? "image/jpeg" // HEIC → treat as jpeg for API compatibility
+        : "image/jpeg";
 
-    const extractionText =
-      extractionResponse.content[0].type === "text"
-        ? extractionResponse.content[0].text
-        : "";
+      const base64 = Buffer.from(fileBuffer).toString("base64");
+      const dataUrl = `data:${mimeType};base64,${base64}`;
+
+      extractionContent = [
+        { type: "text", text: EXTRACTION_PROMPT },
+        { type: "image_url", image_url: { url: dataUrl, detail: "high" } },
+      ];
+    }
+
+    let extractionText: string;
+    try {
+      const extractionResponse = await openai.chat.completions.create({
+        model: MODEL,
+        max_tokens: 2048,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: extractionContent }],
+      });
+      extractionText = extractionResponse.choices[0]?.message?.content ?? "";
+    } catch (openaiErr) {
+      const msg =
+        openaiErr instanceof Error ? openaiErr.message : String(openaiErr);
+      throw new Error(`OpenAI extraction failed: ${msg}`);
+    }
+    console.log(`[Pipeline ${jobId}] STEP 2 done at ${elapsed()}`);
 
     let extractedData: {
       biomarkers: Array<{
@@ -95,7 +139,6 @@ export async function runAnalysisPipeline(
     };
 
     try {
-      // Clean JSON from potential markdown code blocks
       const jsonText = extractionText
         .replace(/```json\n?/g, "")
         .replace(/```\n?/g, "")
@@ -120,14 +163,30 @@ export async function runAnalysisPipeline(
         }))
       );
     }
+    console.log(
+      `[Pipeline ${jobId}] Extracted ${extractedData.biomarkers.length} biomarkers`
+    );
 
-    // ─── STEP 3: RAG - Retrieve relevant FIM knowledge ─────────────────────
+    // ─── STEP 3: RAG - Retrieve relevant FIM knowledge (optional) ──────────
     await updateJobStatus(jobId, "analyzing");
+    console.log(`[Pipeline ${jobId}] STEP 3: Building RAG context…`);
 
     const biomarkerNames = extractedData.biomarkers.map((b) => b.biomarker_name);
-    const ragContext = await buildRagContext(biomarkerNames);
+    let ragContext =
+      "No se encontró contexto adicional en la base de conocimiento FIM.";
+
+    try {
+      ragContext = await buildRagContext(biomarkerNames);
+      console.log(`[Pipeline ${jobId}] STEP 3 done at ${elapsed()}`);
+    } catch (ragErr) {
+      const ragMsg = ragErr instanceof Error ? ragErr.message : String(ragErr);
+      console.warn(
+        `[Pipeline ${jobId}] RAG failed (continuing without context): ${ragMsg}`
+      );
+    }
 
     // ─── STEP 4: Get patient profile for personalization ───────────────────
+    console.log(`[Pipeline ${jobId}] STEP 4: Fetching patient profile…`);
     const { data: profile } = await supabaseAdmin
       .from("profiles")
       .select("*")
@@ -140,8 +199,9 @@ export async function runAnalysisPipeline(
       age = new Date().getFullYear() - dob.getFullYear();
     }
 
-    // ─── STEP 5: Generate FIM report with Claude ───────────────────────────
+    // ─── STEP 5: Generate FIM report with GPT-4o ──────────────────────────
     await updateJobStatus(jobId, "generating");
+    console.log(`[Pipeline ${jobId}] STEP 5: Calling OpenAI (report)…`);
 
     const reportPrompt = buildFIMReportPrompt(
       extractedData.biomarkers,
@@ -156,17 +216,24 @@ export async function runAnalysisPipeline(
       ragContext
     );
 
-    const reportResponse = await anthropic.messages.create({
-      model: "claude-3-5-haiku-20241022",
-      max_tokens: 4096,
-      system: FIM_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: reportPrompt }],
-    });
-
-    const reportText =
-      reportResponse.content[0].type === "text"
-        ? reportResponse.content[0].text
-        : "";
+    let reportText: string;
+    try {
+      const reportResponse = await openai.chat.completions.create({
+        model: MODEL,
+        max_tokens: 4096,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: FIM_SYSTEM_PROMPT },
+          { role: "user", content: reportPrompt },
+        ],
+      });
+      reportText = reportResponse.choices[0]?.message?.content ?? "";
+    } catch (reportErr) {
+      const msg =
+        reportErr instanceof Error ? reportErr.message : String(reportErr);
+      throw new Error(`OpenAI report generation failed: ${msg}`);
+    }
+    console.log(`[Pipeline ${jobId}] STEP 5 done at ${elapsed()}`);
 
     let reportData: Record<string, unknown>;
     try {
@@ -180,6 +247,7 @@ export async function runAnalysisPipeline(
     }
 
     // ─── STEP 6: Save report ───────────────────────────────────────────────
+    console.log(`[Pipeline ${jobId}] STEP 6: Saving report…`);
     const biomarkerAssessments = (
       reportData.biomarker_assessments as Array<{
         biomarker_name: string;
@@ -189,7 +257,6 @@ export async function runAnalysisPipeline(
       }>
     ) ?? [];
 
-    // Update biomarker statuses
     for (const assessment of biomarkerAssessments) {
       await supabaseAdmin
         .from("biomarker_extractions")
@@ -221,14 +288,15 @@ export async function runAnalysisPipeline(
       priority_actions: reportData.priority_actions,
       follow_up_markers: reportData.follow_up_markers,
       rag_sources_used: biomarkerNames,
-      model_version: "claude-3-5-haiku-20241022",
+      model_version: MODEL,
     });
 
     await updateJobStatus(jobId, "completed");
+    console.log(`[Pipeline ${jobId}] COMPLETED at ${elapsed()} ✓`);
   } catch (err) {
     const errorMessage =
       err instanceof Error ? err.message : "Unknown pipeline error";
-    console.error(`Pipeline error for job ${jobId}:`, errorMessage);
+    console.error(`[Pipeline ${jobId}] FAILED at ${elapsed()}: ${errorMessage}`);
     await updateJobStatus(jobId, "failed", errorMessage);
   }
 }
