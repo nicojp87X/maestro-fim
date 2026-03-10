@@ -37,7 +37,17 @@ export async function POST(request: Request) {
   );
   const name = (userData?.user?.user_metadata?.full_name as string) ?? "";
 
-  await sendPasswordResetEmail(email, name, linkData.properties.action_link);
+  try {
+    const resendResponse = await sendPasswordResetEmail(email, name, linkData.properties.action_link);
+    console.log("Resend response:", resendResponse);
+    if (resendResponse.error) {
+       console.error("Resend API error:", resendResponse.error);
+       return NextResponse.json({ error: resendResponse.error.message }, { status: 500 });
+    }
+  } catch (err: any) {
+    console.error("Error sending email:", err);
+    return NextResponse.json({ error: "Failed to send email" }, { status: 500 });
+  }
 
   return NextResponse.json({ success: true });
 }
