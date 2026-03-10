@@ -16,7 +16,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/client";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -34,25 +33,25 @@ export default function RegisterPage() {
     }
 
     setLoading(true);
-    const supabase = createClient();
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: name },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, name }),
     });
 
-    if (error) {
-      toast.error(error.message);
+    const data = await res.json();
+
+    if (!res.ok) {
+      toast.error(data.error ?? "Error al crear la cuenta");
       setLoading(false);
       return;
     }
 
     toast.success(
-      "¡Registro exitoso! Revisa tu email para confirmar tu cuenta."
+      data.emailSent
+        ? "¡Registro exitoso! Revisa tu bandeja de entrada para confirmar tu cuenta."
+        : "¡Registro exitoso! Comprueba también la carpeta de spam."
     );
     router.push("/auth/login");
   }
