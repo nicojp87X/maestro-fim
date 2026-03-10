@@ -54,7 +54,9 @@ export async function proxy(request: NextRequest) {
     PUBLIC_PATHS.some((p) => pathname === p) ||
     AUTH_ROUTES.some((r) => pathname.startsWith(r)) ||
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/api/stripe/webhooks");
+    pathname.startsWith("/api/stripe/webhooks") ||
+    pathname.startsWith("/api/auth/register") ||
+    pathname.startsWith("/api/auth/forgot-password");
 
   // Redirect unauthenticated users to login
   if (!isPublic && !user) {

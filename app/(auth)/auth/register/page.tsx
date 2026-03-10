@@ -34,26 +34,31 @@ export default function RegisterPage() {
 
     setLoading(true);
 
-    const res = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, name }),
-    });
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, name }),
+      });
 
-    const data = await res.json();
+      const data = await res.json();
 
-    if (!res.ok) {
-      toast.error(data.error ?? "Error al crear la cuenta");
+      if (!res.ok) {
+        toast.error(data.error ?? "Error al crear la cuenta");
+        return;
+      }
+
+      toast.success(
+        data.emailSent
+          ? "¡Registro exitoso! Revisa tu bandeja de entrada para confirmar tu cuenta."
+          : "¡Registro exitoso! Comprueba también la carpeta de spam."
+      );
+      router.push("/auth/login");
+    } catch {
+      toast.error("Error de conexión. Inténtalo de nuevo.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    toast.success(
-      data.emailSent
-        ? "¡Registro exitoso! Revisa tu bandeja de entrada para confirmar tu cuenta."
-        : "¡Registro exitoso! Comprueba también la carpeta de spam."
-    );
-    router.push("/auth/login");
   }
 
   return (

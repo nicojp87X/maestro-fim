@@ -70,8 +70,9 @@ function MaybePaywalled({
 export default async function ReportPage({
   params,
 }: {
-  params: { reportId: string };
+  params: Promise<{ reportId: string }>;
 }) {
+  const { reportId } = await params;
   const supabase = await createClient();
 
   const {
@@ -84,7 +85,7 @@ export default async function ReportPage({
     supabase
       .from("fim_reports")
       .select("*")
-      .eq("id", params.reportId)
+      .eq("id", reportId)
       .eq("user_id", user.id)
       .single(),
     supabase
@@ -117,7 +118,13 @@ export default async function ReportPage({
   // Determine if paywall should be applied
   const isPaid =
     subscription?.status === "active" || subscription?.status === "trialing";
-  const isFreePlan = subscription?.plan === "free" || !isPaid;
+  let isFreePlan = subscription?.plan === "free" || !isPaid;
+
+  // Acceso total para usuarios del Modo Prueba
+  if (user.email?.startsWith("test") && user.email?.endsWith("@maestro-fim.com")) {
+    isFreePlan = false;
+  }
+
   // Free users only see: FIM scores + executive summary + top 3 priority actions
   const locked = isFreePlan;
 

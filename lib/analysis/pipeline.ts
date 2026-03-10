@@ -96,10 +96,10 @@ export async function runAnalysisPipeline(
       const mimeType = storagePath.match(/\.png$/i)
         ? "image/png"
         : storagePath.match(/\.webp$/i)
-        ? "image/webp"
-        : storagePath.match(/\.heic$/i)
-        ? "image/jpeg" // HEIC → treat as jpeg for API compatibility
-        : "image/jpeg";
+          ? "image/webp"
+          : storagePath.match(/\.heic$/i)
+            ? "image/jpeg" // HEIC → treat as jpeg for API compatibility
+            : "image/jpeg";
 
       const base64 = Buffer.from(fileBuffer).toString("base64");
       const dataUrl = `data:${mimeType};base64,${base64}`;
@@ -114,7 +114,7 @@ export async function runAnalysisPipeline(
     try {
       const extractionResponse = await openai.chat.completions.create({
         model: MODEL,
-        max_tokens: 2048,
+        max_tokens: 8192,
         response_format: { type: "json_object" },
         messages: [{ role: "user", content: extractionContent }],
       });
@@ -144,7 +144,9 @@ export async function runAnalysisPipeline(
         .replace(/```\n?/g, "")
         .trim();
       extractedData = JSON.parse(jsonText);
-    } catch {
+    } catch (e) {
+      console.error(`[Pipeline ${jobId}] Parse error details:`, e);
+      console.error(`[Pipeline ${jobId}] Raw JSON text was:\n`, extractionText);
       throw new Error("Failed to parse biomarker extraction response");
     }
 
@@ -220,7 +222,7 @@ export async function runAnalysisPipeline(
     try {
       const reportResponse = await openai.chat.completions.create({
         model: MODEL,
-        max_tokens: 4096,
+        max_tokens: 8192,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: FIM_SYSTEM_PROMPT },
@@ -269,7 +271,7 @@ export async function runAnalysisPipeline(
         .eq("biomarker_name", assessment.biomarker_name);
     }
 
-    await supabaseAdmin.from("fim_reports").insert({
+    const { error: insertError } = await supabaseAdmin.from("fim_reports").insert({
       job_id: jobId,
       user_id: userId,
       fim_score: reportData.fim_score,
@@ -290,6 +292,11 @@ export async function runAnalysisPipeline(
       rag_sources_used: biomarkerNames,
       model_version: MODEL,
     });
+
+    if (insertError) {
+      console.error(`[Pipeline ${jobId}] DB Insert error:`, insertError);
+      throw new Error(`Failed to save report to database: ${insertError.message}`);
+    }
 
     await updateJobStatus(jobId, "completed");
     console.log(`[Pipeline ${jobId}] COMPLETED at ${elapsed()} ✓`);
