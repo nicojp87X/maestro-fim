@@ -4,6 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
 
+// Requires Node.js runtime for pdf-parse (uses fs module)
+export const runtime = "nodejs";
+
 // Hobby plan: 60s max. Pro plan: 300s max.
 // waitUntil keeps the Lambda alive after the Response is returned.
 export const maxDuration = 60;

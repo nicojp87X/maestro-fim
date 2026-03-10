@@ -125,7 +125,7 @@ export default function UploadDropzone({ initialJobId }: { initialJobId?: string
         );
       }
     },
-    [startPolling]
+    [startPolling, t]
   );
 
   // If mounted with an initialJobId, start polling immediately

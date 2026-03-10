@@ -25,25 +25,27 @@ const steps = [
   },
 ];
 
-export default function UploadPage({
+export default async function UploadPage({
   searchParams,
 }: {
-  searchParams: { jobId?: string };
+  searchParams: Promise<{ jobId?: string }>;
 }) {
+  const { jobId } = await searchParams;
+
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">
-          {searchParams.jobId ? "Estado del análisis" : "Nueva analítica"}
+          {jobId ? "Estado del análisis" : "Nueva analítica"}
         </h1>
         <p className="text-muted-foreground mt-1">
-          {searchParams.jobId
+          {jobId
             ? "Tu análisis está en proceso. Puedes volver a esta página más tarde."
             : "Sube los resultados de tu analítica de sangre para recibir tu informe FIM personalizado"}
         </p>
       </div>
 
-      {!searchParams.jobId && (
+      {!jobId && (
         <div className="grid grid-cols-3 gap-4">
           {steps.map((step, i) => (
             <div key={i} className="text-center space-y-2">
@@ -57,7 +59,7 @@ export default function UploadPage({
         </div>
       )}
 
-      <UploadDropzone initialJobId={searchParams.jobId} />
+      <UploadDropzone initialJobId={jobId} />
 
       {/* Privacy note */}
       <Card className="border-muted">
