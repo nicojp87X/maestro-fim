@@ -8,7 +8,7 @@ const supabaseAdmin = createClient(
 );
 
 export async function POST(request: Request) {
-  const { email, password, name, autoConfirm } = await request.json();
+  const { email, password, name } = await request.json();
 
   if (!email || !password || !name) {
     return NextResponse.json(
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
       email,
       password,
       user_metadata: { full_name: name },
-      email_confirm: autoConfirm === true ? true : false, // we send the confirmation ourselves unless autoConfirm is true
+      email_confirm: false, // we send the confirmation ourselves
     });
 
   if (createError) {

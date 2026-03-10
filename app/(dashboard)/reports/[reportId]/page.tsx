@@ -118,12 +118,7 @@ export default async function ReportPage({
   // Determine if paywall should be applied
   const isPaid =
     subscription?.status === "active" || subscription?.status === "trialing";
-  let isFreePlan = subscription?.plan === "free" || !isPaid;
-
-  // Acceso total para usuarios del Modo Prueba
-  if (user.email?.startsWith("test") && user.email?.endsWith("@maestro-fim.com")) {
-    isFreePlan = false;
-  }
+  const isFreePlan = subscription?.plan === "free" || !isPaid;
 
   // Free users only see: FIM scores + executive summary + top 3 priority actions
   const locked = isFreePlan;

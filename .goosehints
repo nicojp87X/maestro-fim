@@ -1,0 +1,9 @@
+No uses lenguaje de cortesía ni resúmenes innecesarios.
+
+Muestra solo los fragmentos de código modificados (diffs), nunca el archivo completo.
+
+Antes de codificar, dame un plan de 3 puntos y espera mi OK.
+
+No leas carpetas de dependencias o builds.
+
+Usa Gemini Flash para buscar y explicar; pide permiso para usar modelos Pro/Claude.

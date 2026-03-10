@@ -46,46 +46,7 @@ function LoginForm() {
     router.refresh();
   }
 
-  async function handleTestLogin() {
-    try {
-      setLoading(true);
-      const supabase = createClient();
-      const testEmail = "test" + Math.floor(Math.random() * 1000) + "@maestro-fim.com";
-      const testPassword = "TestPassword123!";
 
-      // First create via API
-      let res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: testEmail,
-          password: testPassword,
-          name: "Usuario Prueba",
-          autoConfirm: true,
-        }),
-      });
-
-      let asJson = await res.json();
-      console.log("Register response:", asJson);
-
-      let { error } = await supabase.auth.signInWithPassword({
-        email: testEmail,
-        password: testPassword,
-      });
-
-      if (error) {
-        toast.error("Error al iniciar sesión: " + error.message);
-        setLoading(false);
-        return;
-      }
-
-      router.push(redirectTo);
-      router.refresh();
-    } catch (err: any) {
-      toast.error("Error inesperado: " + err.message);
-      setLoading(false);
-    }
-  }
 
   return (
     <Card>
@@ -132,15 +93,6 @@ function LoginForm() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading && <Loader2 className="animate-spin mr-2 h-4 w-4" />}
               {loading ? "Iniciando sesión..." : "Iniciar sesión"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={handleTestLogin}
-              disabled={loading}
-            >
-              Entrar en Modo Prueba (Sin contraseña)
             </Button>
           </div>
         </form>
