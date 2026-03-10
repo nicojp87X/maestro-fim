@@ -1,6 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
-import pdfParse from "pdf-parse";
 import { FIM_SYSTEM_PROMPT } from "@/lib/anthropic/prompts/system-context";
 import { EXTRACTION_PROMPT } from "@/lib/anthropic/prompts/extraction";
 import { buildFIMReportPrompt } from "@/lib/anthropic/prompts/fim-report";
@@ -72,6 +71,7 @@ export async function runAnalysisPipeline(
     if (inputType === "pdf") {
       let pdfText: string;
       try {
+        const pdfParse = (await import("pdf-parse")).default;
         const parsed = await pdfParse(Buffer.from(fileBuffer));
         pdfText = parsed.text?.trim() ?? "";
       } catch (parseErr) {
